@@ -50,9 +50,30 @@ import socket
 import time
 import threading
 from threading import RLock
-
+import os
 import Tkinter as tk
 import tkMessageBox
+
+if sys.version_info[0] == 2:
+    import ConfigParser as configparser
+else:
+    import configparser
+from ipaddress import ip_address
+MOTORS = {
+    "X":"0",
+    "Y":"1",
+    "Z":"2",
+    "PHI":"3",
+    "THETA":"4"
+}
+_MOTORS = {
+    0:"X",
+    1:"Y",
+    2:"Z",
+    3:"PHI",
+    4:"THETA"
+}
+WAIT_TIME_UNIT=0.01
 #----- PROTECTED REGION END -----#	//	Spin_motors.additionnal_import
 
 # Device States Description
@@ -78,26 +99,45 @@ class Spin_motors (PyTango.Device_4Impl):
     def delete_device(self):
         self.debug_stream("In delete_device()")
         #----- PROTECTED REGION ID(Spin_motors.delete_device) ENABLED START -----#
-        
         #----- PROTECTED REGION END -----#	//	Spin_motors.delete_device
 
     def init_device(self):
         self.debug_stream("In init_device()")
         self.get_device_properties(self.get_device_class())
-        self.attr_PosX_read = 0.0
-        self.attr_PosY_read = 0.0
         self.attr_PosZ_read = 0.0
-        self.attr_PosAngle_read = 0.0
-        self.attr_goto_z_min_read = 0.0
-        self.attr_goto_z_max_read = 0.0
+        self.attr_insert_z_pos_read = 0.0
+        self.attr_retract_z_pos_read = 0.0
+        self.attr_positive_limit_z_read = False
+        self.attr_negative_limit_z_read = False
         #----- PROTECTED REGION ID(Spin_motors.init_device) ENABLED START -----#
+        self.action=[False for _ in range(4)]
+        self.device_id=[]
+        self.connect_via_ethernet=False
+        self.connect_via_serial=False
+        
+        self.config = configparser.ConfigParser()
+        if os.path.isfile("settings.ini"):
+            self.config.read('settings.ini')
+        else:
+            self.config_save()
+        #           axis Z
+        self._insert=False
+        self._retract=False
+        self.stepZ=0.0
+        self.limitZpos=300.0
+        self.limitZneg=0.0
+        self.insertZ=0.0
+        self.retractZ=0.0
+        self.PosZ_question=False
+
+
+
         self.connected = False         
-        self.connect()
         self.last_comm_timeout=False
         self.WAIT_TIME_UNIT=0.01 
         self.commlock = RLock()
         self.pos=[0.0 for _ in range(4)]
-        self.action=[False for _ in range(4)]
+        
         self.set_posX=0.0
         self.set_posY=0.0
         self.set_posZ=0.0
@@ -105,21 +145,16 @@ class Spin_motors (PyTango.Device_4Impl):
         
         self.stepX=0.0
         self.stepY=0.0
-        self.stepZ=0.0
         self.stepAngle=0.0
         
         self.limitXYpos=10#12.5
         self.limitXYneg=-10#-12.5
         
-        self.limitZpos=300.0
-        self.limitZneg=0.0
-
+        
         self.limitApos=300.0
         self.limitAneg=0.0
 
-        self.insertZ=0.0
-        self.retractZ=0.0   
-
+        
         
         if not 'pingthread' in dir(self):
             self.pingthread = threading.Thread(target=self.periodic_device_ping)
@@ -141,47 +176,12 @@ class Spin_motors (PyTango.Device_4Impl):
     #    Spin_motors read/write attribute methods
     # -------------------------------------------------------------------------
     
-    def read_PosX(self, attr):
-        self.debug_stream("In read_PosX()")
-        #----- PROTECTED REGION ID(Spin_motors.PosX_read) ENABLED START -----#
-        attr.set_value(self.attr_PosX_read)
-        
-        #----- PROTECTED REGION END -----#	//	Spin_motors.PosX_read
-        
-    def read_PosY(self, attr):
-        self.debug_stream("In read_PosY()")
-        #----- PROTECTED REGION ID(Spin_motors.PosY_read) ENABLED START -----#
-        attr.set_value(self.attr_PosY_read)
-        
-        #----- PROTECTED REGION END -----#	//	Spin_motors.PosY_read
-        
     def read_PosZ(self, attr):
         self.debug_stream("In read_PosZ()")
         #----- PROTECTED REGION ID(Spin_motors.PosZ_read) ENABLED START -----#
         attr.set_value(self.attr_PosZ_read)
         
         #----- PROTECTED REGION END -----#	//	Spin_motors.PosZ_read
-        
-    def read_PosAngle(self, attr):
-        self.debug_stream("In read_PosAngle()")
-        #----- PROTECTED REGION ID(Spin_motors.PosAngle_read) ENABLED START -----#
-        attr.set_value(self.attr_PosAngle_read)
-        
-        #----- PROTECTED REGION END -----#	//	Spin_motors.PosAngle_read
-        
-    def write_StepX(self, attr):
-        self.debug_stream("In write_StepX()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.StepX_write) ENABLED START -----#
-        self.stepX=data
-        #----- PROTECTED REGION END -----#	//	Spin_motors.StepX_write
-        
-    def write_StepY(self, attr):
-        self.debug_stream("In write_StepY()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.StepY_write) ENABLED START -----#
-        self.stepY=data
-        #----- PROTECTED REGION END -----#	//	Spin_motors.StepY_write
         
     def write_StepZ(self, attr):
         self.debug_stream("In write_StepZ()")
@@ -190,260 +190,99 @@ class Spin_motors (PyTango.Device_4Impl):
         self.stepZ=data
         #----- PROTECTED REGION END -----#	//	Spin_motors.StepZ_write
         
-    def write_StepAngle(self, attr):
-        self.debug_stream("In write_StepAngle()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.StepAngle_write) ENABLED START -----#
-        self.stepAngle=data
-        #----- PROTECTED REGION END -----#	//	Spin_motors.StepAngle_write
-        
-    def write_SpeedX(self, attr):
-        self.debug_stream("In write_SpeedX()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.SpeedX_write) ENABLED START -----#
-        if self.connected==True:
-            self.mysend("@3 VR="+str(data))         
-        #----- PROTECTED REGION END -----#	//	Spin_motors.SpeedX_write
-        
-    def write_SpeedY(self, attr):
-        self.debug_stream("In write_SpeedY()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.SpeedY_write) ENABLED START -----#
-        if self.connected==True:
-            self.mysend("@2 VR="+str(data))        
-        #----- PROTECTED REGION END -----#	//	Spin_motors.SpeedY_write
-        
     def write_SpeedZ(self, attr):
         self.debug_stream("In write_SpeedZ()")
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.SpeedZ_write) ENABLED START -----#
         if self.connected==True:
-            self.mysend("@1 VR="+str(data))        
+            self.mysend("@{} VR={}".format(MOTORS["Z"],str(data)))        
         #----- PROTECTED REGION END -----#	//	Spin_motors.SpeedZ_write
-        
-    def write_SpeedAngle(self, attr):
-        self.debug_stream("In write_SpeedAngle()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.SpeedAngle_write) ENABLED START -----#
-        if self.connected==True:
-            self.mysend("@4 VR="+str(data))         
-        #----- PROTECTED REGION END -----#	//	Spin_motors.SpeedAngle_write
-        
-    def write_StopX(self, attr):
-        self.debug_stream("In write_StopX()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.StopX_write) ENABLED START -----#
-        self.mysend('@3SSTOP')
-        #----- PROTECTED REGION END -----#	//	Spin_motors.StopX_write
-        
-    def write_StopY(self, attr):
-        self.debug_stream("In write_StopY()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.StopY_write) ENABLED START -----#
-        self.mysend('@2SSTOP')        
-        #----- PROTECTED REGION END -----#	//	Spin_motors.StopY_write
         
     def write_StopZ(self, attr):
         self.debug_stream("In write_StopZ()")
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.StopZ_write) ENABLED START -----#
-        self.mysend('@1SSTOP')         
+        self.mysend('@{}SSTOP'.format(MOTORS["Z"]))        
         #----- PROTECTED REGION END -----#	//	Spin_motors.StopZ_write
-        
-    def write_StopAngle(self, attr):
-        self.debug_stream("In write_StopAngle()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.StopAngle_write) ENABLED START -----#
-        self.mysend('@4SSTOP')        
-        #----- PROTECTED REGION END -----#	//	Spin_motors.StopAngle_write
-        
-    def write_SetPosX(self, attr):
-        self.debug_stream("In write_SetPosX()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.SetPosX_write) ENABLED START -----#
-        if self.connected==True:
-            self.mysend("@3PC="+str(data)) 
-        #----- PROTECTED REGION END -----#	//	Spin_motors.SetPosX_write
-        
-    def write_SetPosY(self, attr):
-        self.debug_stream("In write_SetPosY()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.SetPosY_write) ENABLED START -----#
-        if self.connected==True:
-            self.mysend("@2PC="+str(data))       
-        #----- PROTECTED REGION END -----#	//	Spin_motors.SetPosY_write
         
     def write_SetPosZ(self, attr):
         self.debug_stream("In write_SetPosZ()")
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.SetPosZ_write) ENABLED START -----#
         if self.connected==True:
-            self.mysend("@1PC="+str(data))       
+            self.mysend("@{} PC={}".format(MOTORS["Z"],str(data))) 
+            self.action[int(MOTORS["Z"])]=True
         #----- PROTECTED REGION END -----#	//	Spin_motors.SetPosZ_write
         
-    def write_SetAngle(self, attr):
-        self.debug_stream("In write_SetAngle()")
+    def read_insert_z_pos(self, attr):
+        self.debug_stream("In read_insert_z_pos()")
+        #----- PROTECTED REGION ID(Spin_motors.insert_z_pos_read) ENABLED START -----#
+        attr.set_value(self.attr_insert_z_pos_read)
+        
+        #----- PROTECTED REGION END -----#	//	Spin_motors.insert_z_pos_read
+        
+    def write_insert_z_pos(self, attr):
+        self.debug_stream("In write_insert_z_pos()")
         data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.SetAngle_write) ENABLED START -----#
-        if self.connected==True:
-            self.mysend("@4PC="+str(data))          
-        #----- PROTECTED REGION END -----#	//	Spin_motors.SetAngle_write
+        #----- PROTECTED REGION ID(Spin_motors.insert_z_pos_write) ENABLED START -----#
+        self.attr_insert_z_pos_read=data
+        self.config.set('motor_Z', "insert_position", self.attr_insert_z_pos_read)
+        #----- PROTECTED REGION END -----#	//	Spin_motors.insert_z_pos_write
         
-    def write_goto_max_command(self, attr):
-        self.debug_stream("In write_goto_max_command()")
+    def read_retract_z_pos(self, attr):
+        self.debug_stream("In read_retract_z_pos()")
+        #----- PROTECTED REGION ID(Spin_motors.retract_z_pos_read) ENABLED START -----#
+        attr.set_value(self.attr_retract_z_pos_read)
+        
+        #----- PROTECTED REGION END -----#	//	Spin_motors.retract_z_pos_read
+        
+    def write_retract_z_pos(self, attr):
+        self.debug_stream("In write_retract_z_pos()")
         data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.goto_max_command_write) ENABLED START -----#
+        #----- PROTECTED REGION ID(Spin_motors.retract_z_pos_write) ENABLED START -----#
+        self.attr_retract_z_pos_read=data
+        self.config.set('motor_Z', "retract_position", self.attr_retract_z_pos_read)
+        #----- PROTECTED REGION END -----#	//	Spin_motors.retract_z_pos_write
         
-        #----- PROTECTED REGION END -----#	//	Spin_motors.goto_max_command_write
+    def read_positive_limit_z(self, attr):
+        self.debug_stream("In read_positive_limit_z()")
+        #----- PROTECTED REGION ID(Spin_motors.positive_limit_z_read) ENABLED START -----#
+        attr.set_value(self.attr_positive_limit_z_read)
         
-    def write_goto_min_command(self, attr):
-        self.debug_stream("In write_goto_min_command()")
+        #----- PROTECTED REGION END -----#	//	Spin_motors.positive_limit_z_read
+        
+    def read_negative_limit_z(self, attr):
+        self.debug_stream("In read_negative_limit_z()")
+        #----- PROTECTED REGION ID(Spin_motors.negative_limit_z_read) ENABLED START -----#
+        attr.set_value(self.attr_negative_limit_z_read)
+        
+        #----- PROTECTED REGION END -----#	//	Spin_motors.negative_limit_z_read
+        
+    def write_connect_via_ethernet(self, attr):
+        self.debug_stream("In write_connect_via_ethernet()")
         data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.goto_min_command_write) ENABLED START -----#
+        #----- PROTECTED REGION ID(Spin_motors.connect_via_ethernet_write) ENABLED START -----#
+        device=str(self)
+        device=device[device.index("(")+1:device.index(")")]
+        device_server=PyTango.DeviceProxy(device)
+        self.connect_via_ehternet=data
+        self.config.set('general_settings', "connect_via_serial", self.connect_via_ethernet)
+        if data==True:
+            device_server.write_attribute("connect_via_serial", False)    
+        #----- PROTECTED REGION END -----#	//	Spin_motors.connect_via_ethernet_write
         
-        #----- PROTECTED REGION END -----#	//	Spin_motors.goto_min_command_write
-        
-    def write_MoveX(self, attr):
-        self.debug_stream("In write_MoveX()")
+    def write_connect_via_serial(self, attr):
+        self.debug_stream("In write_connect_via_serial()")
         data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.MoveX_write) ENABLED START -----#
-        if data==True and self.action[2]==False:
-            if self.attr_PosX_read+self.stepX>self.limitXYpos:
-                self.DIS=self.limitXYpos-self.attr_PosX_read
-            else:
-                self.DIS=self.stepX
-            self.mysend('@3 DIS='+str(self.DIS))
-            self.mysend('@3 MI')
-        elif data==False and self.action[2]==False:
-            if self.attr_PosX_read-self.stepX<self.limitXYneg:
-                self.DIS=self.limitXYneg-self.attr_PosX_read
-            else:
-                self.DIS=-self.stepX
-            
-            self.mysend('@3 DIS='+str(self.DIS))
-            self.mysend('@3 MI')
-        #----- PROTECTED REGION END -----#	//	Spin_motors.MoveX_write
-        
-    def write_MoveY(self, attr):
-        self.debug_stream("In write_MoveY()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.MoveY_write) ENABLED START -----#
-        if data==True and self.action[1]==False:
-            if self.attr_PosY_read+self.stepY>self.limitXYpos:
-                self.DIS=self.limitXYpos-self.attr_PosY_read
-            else:
-                self.DIS=self.stepY
-            self.mysend('@2 DIS='+str(self.DIS))
-            self.mysend('@2 MI')
-        elif data==False and self.action[1]==False:
-            if self.attr_PosY_read-self.stepY<self.limitXYneg:
-                self.DIS=self.limitXYneg-self.attr_PosY_read
-            else:
-                self.DIS=-self.stepY
-            
-            self.mysend('@2 DIS='+str(self.DIS))
-            self.mysend('@2 MI')        
-        #----- PROTECTED REGION END -----#	//	Spin_motors.MoveY_write
-        
-    def write_MoveZ(self, attr):
-        self.debug_stream("In write_MoveZ()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.MoveZ_write) ENABLED START -----#
-        if data==True and self.action[0]==False:
-            if self.attr_PosZ_read+self.stepZ>self.limitZpos:
-                self.DIS=self.limitZpos-self.attr_PosZ_read
-            else:
-                self.DIS=self.stepZ
-            self.mysend('@1 DIS='+str(self.DIS))
-            self.mysend('@1 MI')
-        elif data==False and self.action[0]==False:
-            if self.attr_PosZ_read-self.stepZ<self.limitZneg:
-                self.DIS=self.limitZneg-self.attr_PosZ_read
-            else:
-                self.DIS=-self.stepZ
-            
-            self.mysend('@1 DIS='+str(self.DIS))
-            self.mysend('@1 MI')          
-        #----- PROTECTED REGION END -----#	//	Spin_motors.MoveZ_write
-        
-    def write_MoveAngle(self, attr):
-        self.debug_stream("In write_MoveAngle()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.MoveAngle_write) ENABLED START -----#
-    
-        if data==True and self.action[3]==False:
-            if self.attr_PosAngle_read+self.stepAngle>self.limitApos:
-                self.DIS=self.limitApos-self.attr_PosAngle_read
-            else:
-                self.DIS=self.stepAngle
-            self.mysend('@4 DIS='+str(self.DIS))
-            self.mysend('@4 MI')
-        elif data==False and self.action[3]==False:
-            if self.attr_PosAngle_read-self.stepAngle<self.limitAneg:
-                self.DIS=self.limitAneg-self.attr_PosAngle_read
-            else:
-                self.DIS=-self.stepAngle
-            
-            self.mysend('@4 DIS='+str(self.DIS))
-            self.mysend('@4 MI')              
-        #----- PROTECTED REGION END -----#	//	Spin_motors.MoveAngle_write
-        
-    def write_GoToAngle(self, attr):
-        self.debug_stream("In write_GoToAngle()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.GoToAngle_write) ENABLED START -----#
-        self.GoToAngle=data
-        #----- PROTECTED REGION END -----#	//	Spin_motors.GoToAngle_write
-        
-    def write_GoToActionAngle(self, attr):
-        self.debug_stream("In write_GoToActionAngle()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.GoToActionAngle_write) ENABLED START -----#
-        if self.action[3]==False:
-            root = tk.Tk()
-            root.withdraw()
-            MsgBox = tkMessageBox.askquestion ('Crystal rotation','You are about to turn spin filter crystal to '+str(self.GoToAngle)+' deg.\r Are you sure?',icon = 'warning')
-            if MsgBox == 'yes':
-                if self.action[0]==False:
-                    if self.GoToAngle>self.limitApos:
-                        self.DIS=self.limitApos-self.attr_PosAngle_read
-                    elif self.GoToAngle<self.limitAneg:
-                        self.DIS=self.limitAneg-self.attr_PosAngle_read
-                    else:
-                        self.DIS=self.GoToAngle-self.attr_PosAngle_read
-                    self.mysend('@4 DIS='+str(self.DIS))
-                    self.mysend('@4 MI')
-        else:
-            pass
-        #----- PROTECTED REGION END -----#	//	Spin_motors.GoToActionAngle_write
-        
-    def read_goto_z_min(self, attr):
-        self.debug_stream("In read_goto_z_min()")
-        #----- PROTECTED REGION ID(Spin_motors.goto_z_min_read) ENABLED START -----#
-        attr.set_value(self.attr_goto_z_min_read)
-        
-        #----- PROTECTED REGION END -----#	//	Spin_motors.goto_z_min_read
-        
-    def write_goto_z_min(self, attr):
-        self.debug_stream("In write_goto_z_min()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.goto_z_min_write) ENABLED START -----#
-        
-        #----- PROTECTED REGION END -----#	//	Spin_motors.goto_z_min_write
-        
-    def read_goto_z_max(self, attr):
-        self.debug_stream("In read_goto_z_max()")
-        #----- PROTECTED REGION ID(Spin_motors.goto_z_max_read) ENABLED START -----#
-        attr.set_value(self.attr_goto_z_max_read)
-        
-        #----- PROTECTED REGION END -----#	//	Spin_motors.goto_z_max_read
-        
-    def write_goto_z_max(self, attr):
-        self.debug_stream("In write_goto_z_max()")
-        data = attr.get_write_value()
-        #----- PROTECTED REGION ID(Spin_motors.goto_z_max_write) ENABLED START -----#
-        
-        #----- PROTECTED REGION END -----#	//	Spin_motors.goto_z_max_write
+        #----- PROTECTED REGION ID(Spin_motors.connect_via_serial_write) ENABLED START -----#
+        device=str(self)
+        device=device[device.index("(")+1:device.index(")")]
+        device_server=PyTango.DeviceProxy(device)
+        self.connect_via_serial=data
+        self.config.set('general_settings', "connect_via_serial", self.connect_via_serial)
+        if data==True:
+            device_server.write_attribute("connect_via_ethernet", False)
+        #----- PROTECTED REGION END -----#	//	Spin_motors.connect_via_serial_write
         
     
     
@@ -459,93 +298,213 @@ class Spin_motors (PyTango.Device_4Impl):
     #    Spin_motors command methods
     # -------------------------------------------------------------------------
     
+    def insert(self):
+        """ 
+        """
+        self.debug_stream("In insert()")
+        #----- PROTECTED REGION ID(Spin_motors.insert) ENABLED START -----#
+        self._insert=True
+        #----- PROTECTED REGION END -----#	//	Spin_motors.insert
+        
+    def retract(self):
+        """ 
+        """
+        self.debug_stream("In retract()")
+        #----- PROTECTED REGION ID(Spin_motors.retract) ENABLED START -----#
+        self._retract=True
+        #----- PROTECTED REGION END -----#	//	Spin_motors.retract
+        
+    def MoveZ_in(self):
+        """ move axis to lower values
+        """
+        self.debug_stream("In MoveZ_in()")
+        #----- PROTECTED REGION ID(Spin_motors.MoveZ_in) ENABLED START -----#
+        if self.action[int(MOTORS["Z"])]==True:
+            if self.attr_PosZ_read-self.stepZ<self.limitZneg:
+                self.DIS=self.limitZneg-self.attr_PosZ_read
+            else:
+                self.DIS=-self.stepZ
+            
+            self.mysend('@{} DIS={}'.format(MOTORS["Z"],str(self.DIS)))
+            self.mysend('@{} MI'.format(MOTORS["Z"]))
+        else:
+            self.PosZ_question=True
+
+        #----- PROTECTED REGION END -----#	//	Spin_motors.MoveZ_in
+        
+    def MoveZ_out(self):
+        """ move axis to higher values
+        """
+        self.debug_stream("In MoveZ_out()")
+        #----- PROTECTED REGION ID(Spin_motors.MoveZ_out) ENABLED START -----#
+        if self.action[int(MOTORS["Z"])]==True:
+            if self.attr_PosZ_read+self.stepZ>self.limitZpos:
+                self.DIS=self.limitZpos-self.attr_PosZ_read
+            else:
+                self.DIS=self.stepZ
+            self.mysend('@{} DIS={}'.format(MOTORS["Z"],str(self.DIS)))
+            self.mysend('@{} MI'.format(MOTORS["Z"]))
+        else:
+            self.PosZ_question=True
+        #----- PROTECTED REGION END -----#	//	Spin_motors.MoveZ_out
+        
+    def almclr_z(self):
+        """ clear alarm for axis z
+        """
+        self.debug_stream("In almclr_z()")
+        #----- PROTECTED REGION ID(Spin_motors.almclr_z) ENABLED START -----#
+        self.mysend('@{} ALMCLR'.format(MOTORS["Z"]))
+        #----- PROTECTED REGION END -----#	//	Spin_motors.almclr_z
+        
+    def connect(self):
+        """ Connect to device
+        """
+        self.debug_stream("In connect()")
+        #----- PROTECTED REGION ID(Spin_motors.connect) ENABLED START -----#
+        print self.connect_via_ehternet
+        if self.connect_via_ehternet==True:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.last_comm_timeout = False
+            host=self.host_ip
+            port=self.port
+            try:
+                self.sock.setblocking(1)
+            except:
+                pass
+            try:
+                self.sock.connect((host, port))
+            except Exception as e:
+                self.connected = False
+                print ("connected",self.connected)
+            else:
+                self.connected = True
+                print ("connected",self.connected)
+                self.sock.setblocking(0)
+                self.mysend('@1ECHO')
+        elif self.connect_via_serial==True:
+            pass
+        
+        
+        i=0
+        while i<256 and self.connected==True:
+            self.mysend('@{}ID'.format(str(i)))
+            time.sleep(0.1)
+            ID=self.myreceive()
+            if ID.find("=")!=-1:
+                self.device_id.append(i)
+            else:
+                break
+            i+=1
+        print ("found {} controller(s)".format(str(i)))
+        
+        
+        #----- PROTECTED REGION END -----#	//	Spin_motors.connect
+        
+    def config_save(self):
+        """ save the settings of the motors
+        """
+        self.debug_stream("In config_save()")
+        #----- PROTECTED REGION ID(Spin_motors.config_save) ENABLED START -----#       
+        with open('settings.ini', 'w') as configfile:
+            config.write(configfile)
+        #----- PROTECTED REGION END -----#	//	Spin_motors.config_save
+        
+    def config_load(self):
+        """ load the settings of the motor
+        """
+        self.debug_stream("In config_load()")
+        #----- PROTECTED REGION ID(Spin_motors.config_load) ENABLED START -----#
+        device=str(self)
+        device=device[device.index("(")+1:device.index(")")]
+        device_server=PyTango.DeviceProxy(device)
+        #----- PROTECTED REGION END -----#	//	Spin_motors.config_load
+        
 
     #----- PROTECTED REGION ID(Spin_motors.programmer_methods) ENABLED START -----#
+    def config_create(self):
+        self.config.add_section('general_settings')
+        
+        for i in range(len(self.device_id)):
+            self.config.add_section('motor_{}'.format(_MOTORS[i]))
+            
+            
+    def createReconnectTriggerAttribute(self):
+        attr = PyTango.Attr("Reconnect_Trigger", PyTango.DevDouble, PyTango.AttrWriteType.WRITE)
+        prop = PyTango.UserDefaultAttrProp()
+        prop.set_description("Triggers a reconnection attempt to the hardware.")
+        attr.set_default_properties(prop)
+        self.add_attribute(attr, self.read_Reconnect_Trigger, self.write_Reconnect_Trigger)
 
+    def read_Reconnect_Trigger(self, attr):
+        attr.set_value(0.0)
+        
+    def write_Reconnect_Trigger(self, attr):
+        self.connectToHardware()
+    
     def AskQuestion_thread(self):
         while True:
-        root = tk.Tk()
-        root.withdraw()
-        MsgBox = tkMessageBox.askquestion ('Insert spin filter','You are about to insert spin filter.\r Are you sure? Is valve open?',icon = 'warning')
-        if MsgBox == 'yes':
-            if self.action[0]==False:
-                self.DIS=self.insertZ-self.attr_PosZ_read
-                self.mysend('@1 DIS='+str(self.DIS))
-                self.mysend('@1 MI')            
-        else:
-            pass   
-
-        root = tk.Tk()
-        root.withdraw()
-        MsgBox = tkMessageBox.askquestion ('Insert spin filter','You are about to retract spin filter.\r Are you sure?',icon = 'warning')
-        if MsgBox == 'yes':
-            if self.action[0]==False:
-                self.DIS=self.retractZ-self.attr_PosZ_read
-                self.mysend('@1 DIS='+str(self.DIS))
-                self.mysend('@1 MI')            
-        else:
-            pass        
+            if self.PosZ_question==True:
+                self.PosZ_question=False
+                root = tk.Tk()
+                root.withdraw()
+                MsgBox = tkMessageBox.showinfo ('Warning!','Please set position of this axis',icon = 'warning')                
+            if self._insert==True and self.action(MOTORS["Z"])==True:
+                self._insert=False
+                root = tk.Tk()
+                root.withdraw()
+                MsgBox = tkMessageBox.askquestion ('Insert spin filter','You are about to insert spin filter.\r Are you sure? Is valve open?',icon = 'warning')
+                if MsgBox == 'yes':
+                    if self.action[0]==False:
+                        self.DIS=self.insertZ-self.attr_PosZ_read
+                        self.mysend('@{} DIS={}'.format(MOTORS["Z"],str(self.DIS)))
+                        self.mysend('@{} MI'.format(MOTORS["Z"]))
+            if self._retract==True and self.action(MOTORS["Z"])==True:
+                self._insert=False
+                root = tk.Tk()
+                root.withdraw()
+                MsgBox = tkMessageBox.askquestion ('Insert spin filter','You are about to retract spin filter.\r Are you sure?',icon = 'warning')
+                if MsgBox == 'yes':
+                    if self.action[0]==False:
+                        self.DIS=self.retractZ-self.attr_PosZ_read
+                        self.mysend('@{} DIS={}'.format(MOTORS["Z"],str(self.DIS)))
+                        self.mysend('@{} MI'.format(MOTORS["Z"]))
         
             time.sleep(0.1)
+            
     def periodic_device_ping(self):
         
         while True:
             if self.connected==True:
-                for i in range(1,5,1):
+                for i in range(0,4,1):
                     self.mysend('@'+str(i)+' PC')
                     time.sleep(0.1)
                     PC=self.myreceive().split("\r")
-                    if PC[0]=='@'+str(1)+' PC':
+                    if PC[0]=='@{} PC'.format(MOTORS["Z"]):
                         val = PC[1].split("=")[1].split(" ")[0]
                         if self.attr_PosZ_read==float(val):
                             self.action[i-1]=False
                         else:
                             self.attr_PosZ_read=float(val)
                             self.action[i-1]=True
-                            
-                    if PC[0]=='@'+str(2)+' PC':
-                        val = PC[1].split("=")[1].split(" ")[0]
-                        if self.attr_PosY_read==float(val):
-                            self.action[i-1]=False
+                for i in range(0,5,1):
+                    self.mysend('@{} IO'.format(str(i)))
+                    time.sleep(0.1)
+                    IO=self.myreceive().split("\n")
+                    if MOTORS["Z"]==str(i):
+                        if int(IO[6][1])==1:
+                            self.attr_positive_limit_z_read=True
                         else:
-                            self.attr_PosY_read=float(val)
-                            self.action[i-1]=True
-                            
-                    if PC[0]=='@'+str(3)+' PC':
-                        val = PC[1].split("=")[1].split(" ")[0]
-                        if self.attr_PosX_read==float(val):
-                            self.action[i-1]=False
+                            self.attr_positive_limit_z_read=False
+                        
+                        if int(IO[6][3])==1:
+                            self.attr_negative_limit_z_read=True
                         else:
-                            self.attr_PosX_read=float(val)
-                            self.action[i-1]=True 
+                            self.attr_negative_limit_z_read=False
                             
-                    if PC[0]=='@'+str(4)+' PC':
-                        val = PC[1].split("=")[1].split(" ")[0]                        
-                        if self.attr_PosAngle_read==float(val):
-                            self.action[i-1]=False
-                        else:
-                            self.attr_PosAngle_read=float(val)
-                            self.action[i-1]=True  
-    
-    
-    def connect(self):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.last_comm_timeout = False
-        host=self.host_ip
-        port=self.port
-        try:
-            self.sock.setblocking(1)
-        except:
-            pass
-        try:
-            self.sock.connect((host, port))
-        except Exception as e:
-
-            self.connected = False
-        else:
-            self.connected = True
-            self.sock.setblocking(0)
-        self.mysend('@1 PC')
+                        
+                        print ("lim",IO[6][1])
+            else:
+                time.sleep(0.1)
 
     def mysend(self, msg):
         totalsent = 0
@@ -555,13 +514,25 @@ class Spin_motors (PyTango.Device_4Impl):
             if sent == 0:
                 raise RuntimeError("socket connection broken")
             totalsent = totalsent + sent
-        
 
-    def myreceive(self):
+    def myreceive(self, timeout=2.0):
         resp=""
         resp += self.sock.recv(10000)
+        tstart = time.time()
+        tend = tstart
+            # really wait (block!) until end-of-line character is reached
+        while len(resp)==0 or resp[len(resp)-1]!='>':
+            try:
+                resp += self.sock.recv(10000)
+            except socket.error:
+                pass
+            time.sleep(WAIT_TIME_UNIT)
+            tend = time.time()
+            if tend-tstart>=timeout:
+                break
+        self.last_comm_timeout = (tend-tstart>=timeout)
         return resp
-            
+
     #----- PROTECTED REGION END -----#	//	Spin_motors.programmer_methods
 
 class Spin_motorsClass(PyTango.DeviceClass):
@@ -581,37 +552,45 @@ class Spin_motorsClass(PyTango.DeviceClass):
         'host_ip':
             [PyTango.DevString, 
              '',
-            ["192.168.3.211"] ],
+            ["192.168.3.117"] ],
         'port':
             [PyTango.DevLong, 
              '',
-            [101]],
+            [100]],
         }
 
 
     #    Command definitions
     cmd_list = {
+        'insert':
+            [[PyTango.DevVoid, "none"],
+            [PyTango.DevVoid, "none"]],
+        'retract':
+            [[PyTango.DevVoid, "none"],
+            [PyTango.DevVoid, "none"]],
+        'MoveZ_in':
+            [[PyTango.DevVoid, "none"],
+            [PyTango.DevVoid, "none"]],
+        'MoveZ_out':
+            [[PyTango.DevVoid, "none"],
+            [PyTango.DevVoid, "none"]],
+        'almclr_z':
+            [[PyTango.DevVoid, "none"],
+            [PyTango.DevVoid, "none"]],
+        'connect':
+            [[PyTango.DevVoid, "none"],
+            [PyTango.DevVoid, "none"]],
+        'config_save':
+            [[PyTango.DevVoid, "none"],
+            [PyTango.DevVoid, "none"]],
+        'config_load':
+            [[PyTango.DevVoid, "none"],
+            [PyTango.DevVoid, "none"]],
         }
 
 
     #    Attribute definitions
     attr_list = {
-        'PosX':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.READ],
-            {
-                'max value': "12.5",
-                'min value': "-12.5",
-            } ],
-        'PosY':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.READ],
-            {
-                'max value': "12.5",
-                'min value': "-12.5",
-            } ],
         'PosZ':
             [[PyTango.DevDouble,
             PyTango.SCALAR,
@@ -620,35 +599,7 @@ class Spin_motorsClass(PyTango.DeviceClass):
                 'max value': "12.5",
                 'min value': "-12.5",
             } ],
-        'PosAngle':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.READ],
-            {
-                'max value': "12.5",
-                'min value': "-12.5",
-            } ],
-        'StepX':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'StepY':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
         'StepZ':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'StepAngle':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'SpeedX':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'SpeedY':
             [[PyTango.DevDouble,
             PyTango.SCALAR,
             PyTango.WRITE]],
@@ -656,31 +607,7 @@ class Spin_motorsClass(PyTango.DeviceClass):
             [[PyTango.DevDouble,
             PyTango.SCALAR,
             PyTango.WRITE]],
-        'SpeedAngle':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'StopX':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'StopY':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
         'StopZ':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'StopAngle':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'SetPosX':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'SetPosY':
             [[PyTango.DevDouble,
             PyTango.SCALAR,
             PyTango.WRITE]],
@@ -688,50 +615,30 @@ class Spin_motorsClass(PyTango.DeviceClass):
             [[PyTango.DevDouble,
             PyTango.SCALAR,
             PyTango.WRITE]],
-        'SetAngle':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'goto_max_command':
-            [[PyTango.DevBoolean,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'goto_min_command':
-            [[PyTango.DevBoolean,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'MoveX':
-            [[PyTango.DevBoolean,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'MoveY':
-            [[PyTango.DevBoolean,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'MoveZ':
-            [[PyTango.DevBoolean,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'MoveAngle':
-            [[PyTango.DevBoolean,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'GoToAngle':
-            [[PyTango.DevDouble,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'GoToActionAngle':
-            [[PyTango.DevBoolean,
-            PyTango.SCALAR,
-            PyTango.WRITE]],
-        'goto_z_min':
+        'insert_z_pos':
             [[PyTango.DevDouble,
             PyTango.SCALAR,
             PyTango.READ_WRITE]],
-        'goto_z_max':
+        'retract_z_pos':
             [[PyTango.DevDouble,
             PyTango.SCALAR,
             PyTango.READ_WRITE]],
+        'positive_limit_z':
+            [[PyTango.DevBoolean,
+            PyTango.SCALAR,
+            PyTango.READ]],
+        'negative_limit_z':
+            [[PyTango.DevBoolean,
+            PyTango.SCALAR,
+            PyTango.READ]],
+        'connect_via_ethernet':
+            [[PyTango.DevBoolean,
+            PyTango.SCALAR,
+            PyTango.WRITE]],
+        'connect_via_serial':
+            [[PyTango.DevBoolean,
+            PyTango.SCALAR,
+            PyTango.WRITE]],
         }
 
 
