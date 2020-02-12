@@ -114,12 +114,15 @@ class Spin_motors (PyTango.Device_4Impl):
         self.device_id=[]
         self.connect_via_ethernet=False
         self.connect_via_serial=False
+        self.PosZ_warning=False
+        self.connection_warning=False
+        self.interface_warning=False
+        self.config_file_warning=False        
         
-        self.config = configparser.ConfigParser()
-        if os.path.isfile("settings.ini"):
-            self.config.read('settings.ini')
-        else:
-            self.config_save()
+        self.port_busy=False
+        self.config = configparser.RawConfigParser()
+        
+ 
         #           axis Z
         self._insert=False
         self._retract=False
@@ -128,7 +131,6 @@ class Spin_motors (PyTango.Device_4Impl):
         self.limitZneg=0.0
         self.insertZ=0.0
         self.retractZ=0.0
-        self.PosZ_question=False
 
 
 
@@ -156,14 +158,15 @@ class Spin_motors (PyTango.Device_4Impl):
 
         
         
-        if not 'pingthread' in dir(self):
-            self.pingthread = threading.Thread(target=self.periodic_device_ping)
-            self.pingthread.setDaemon(True)
-            self.pingthread.start()
+        if not 'poolthread' in dir(self):
+            self.poolthread = threading.Thread(target=self.pool_motor_variables)
+            self.poolthread.setDaemon(True)
+            self.poolthread.start()
         if not 'AskQuestion' in dir(self):
             self.AskQuestion = threading.Thread(target=self.AskQuestion_thread)
             self.AskQuestion.setDaemon(True)
-            self.AskQuestion.start()  
+            self.AskQuestion.start() 
+        self.config_check()
         #----- PROTECTED REGION END -----#	//	Spin_motors.init_device
 
     def always_executed_hook(self):
@@ -188,30 +191,37 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.StepZ_write) ENABLED START -----#
         self.stepZ=data
+        self.config.set('motor_Z', "step", data)
         #----- PROTECTED REGION END -----#	//	Spin_motors.StepZ_write
         
     def write_SpeedZ(self, attr):
         self.debug_stream("In write_SpeedZ()")
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.SpeedZ_write) ENABLED START -----#
-        if self.connected==True:
-            self.mysend("@{} VR={}".format(MOTORS["Z"],str(data)))        
+        if self.get_state() == PyTango.DevState.ON:
+            self.mysend("@{} VR={}".format(MOTORS["Z"],str(data)))
+            self.config.set('motor_Z', "speed", data)
+        else:
+            self.connection_warning=True
         #----- PROTECTED REGION END -----#	//	Spin_motors.SpeedZ_write
         
     def write_StopZ(self, attr):
         self.debug_stream("In write_StopZ()")
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.StopZ_write) ENABLED START -----#
-        self.mysend('@{}SSTOP'.format(MOTORS["Z"]))        
+        if self.get_state() == PyTango.DevState.ON:
+            self.mysend('@{}SSTOP'.format(MOTORS["Z"]))        
         #----- PROTECTED REGION END -----#	//	Spin_motors.StopZ_write
         
     def write_SetPosZ(self, attr):
         self.debug_stream("In write_SetPosZ()")
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.SetPosZ_write) ENABLED START -----#
-        if self.connected==True:
+        if self.get_state() == PyTango.DevState.ON:
             self.mysend("@{} PC={}".format(MOTORS["Z"],str(data))) 
-            self.action[int(MOTORS["Z"])]=True
+            self.config.set('motor_Z', "position", data)
+        else:
+            self.connection_warning=True
         #----- PROTECTED REGION END -----#	//	Spin_motors.SetPosZ_write
         
     def read_insert_z_pos(self, attr):
@@ -266,7 +276,7 @@ class Spin_motors (PyTango.Device_4Impl):
         device=device[device.index("(")+1:device.index(")")]
         device_server=PyTango.DeviceProxy(device)
         self.connect_via_ehternet=data
-        self.config.set('general_settings', "connect_via_serial", self.connect_via_ethernet)
+        self.config.set('general_settings', "connect_via_ethernet", self.connect_via_ehternet)
         if data==True:
             device_server.write_attribute("connect_via_serial", False)    
         #----- PROTECTED REGION END -----#	//	Spin_motors.connect_via_ethernet_write
@@ -282,6 +292,7 @@ class Spin_motors (PyTango.Device_4Impl):
         self.config.set('general_settings', "connect_via_serial", self.connect_via_serial)
         if data==True:
             device_server.write_attribute("connect_via_ethernet", False)
+            
         #----- PROTECTED REGION END -----#	//	Spin_motors.connect_via_serial_write
         
     
@@ -328,7 +339,7 @@ class Spin_motors (PyTango.Device_4Impl):
             self.mysend('@{} DIS={}'.format(MOTORS["Z"],str(self.DIS)))
             self.mysend('@{} MI'.format(MOTORS["Z"]))
         else:
-            self.PosZ_question=True
+            self.PosZ_warning=True
 
         #----- PROTECTED REGION END -----#	//	Spin_motors.MoveZ_in
         
@@ -345,7 +356,7 @@ class Spin_motors (PyTango.Device_4Impl):
             self.mysend('@{} DIS={}'.format(MOTORS["Z"],str(self.DIS)))
             self.mysend('@{} MI'.format(MOTORS["Z"]))
         else:
-            self.PosZ_question=True
+            self.PosZ_warning=True
         #----- PROTECTED REGION END -----#	//	Spin_motors.MoveZ_out
         
     def almclr_z(self):
@@ -361,8 +372,20 @@ class Spin_motors (PyTango.Device_4Impl):
         """
         self.debug_stream("In connect()")
         #----- PROTECTED REGION ID(Spin_motors.connect) ENABLED START -----#
-        print self.connect_via_ehternet
-        if self.connect_via_ehternet==True:
+        if "general_settings" in self.config.sections():
+            device=str(self)
+            device=device[device.index("(")+1:device.index(")")]
+            device_server=PyTango.DeviceProxy(device)
+            if self.config.get('general_settings','connect_via_ethernet')=="True":
+                device_server.write_attribute("connect_via_ethernet",True)
+            else:
+                device_server.write_attribute("connect_via_ethernet",False)
+                
+            if self.config.get("general_settings","connect_via_serial")=="True":
+                device_server.write_attribute("connect_via_serial",True)
+            else:
+                device_server.write_attribute("connect_via_serial",False)             
+        if  'connect_via_ehternet' in dir(self) and self.connect_via_ehternet==True:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.last_comm_timeout = False
             host=self.host_ip
@@ -381,9 +404,10 @@ class Spin_motors (PyTango.Device_4Impl):
                 print ("connected",self.connected)
                 self.sock.setblocking(0)
                 self.mysend('@1ECHO')
-        elif self.connect_via_serial==True:
+        elif  'connect_via_serial' in dir(self) and self.connect_via_serial==True:
             pass
-        
+        else:
+            self.interface_warning=True
         
         i=0
         while i<256 and self.connected==True:
@@ -396,6 +420,10 @@ class Spin_motors (PyTango.Device_4Impl):
                 break
             i+=1
         print ("found {} controller(s)".format(str(i)))
+        if i!=0:
+            self.set_state(PyTango.DevState.ON)
+        else:
+            self.set_state(PyTango.DevState.FAULT)
         
         
         #----- PROTECTED REGION END -----#	//	Spin_motors.connect
@@ -406,7 +434,7 @@ class Spin_motors (PyTango.Device_4Impl):
         self.debug_stream("In config_save()")
         #----- PROTECTED REGION ID(Spin_motors.config_save) ENABLED START -----#       
         with open('settings.ini', 'w') as configfile:
-            config.write(configfile)
+            self.config.write(configfile)
         #----- PROTECTED REGION END -----#	//	Spin_motors.config_save
         
     def config_load(self):
@@ -421,12 +449,12 @@ class Spin_motors (PyTango.Device_4Impl):
         
 
     #----- PROTECTED REGION ID(Spin_motors.programmer_methods) ENABLED START -----#
-    def config_create(self):
-        self.config.add_section('general_settings')
-        
-        for i in range(len(self.device_id)):
-            self.config.add_section('motor_{}'.format(_MOTORS[i]))
-            
+    def config_check(self):
+        if os.path.isfile("settings.ini"):
+            self.config.read('settings.ini')
+        else:
+            self.config_file_warning=True
+            return 0
             
     def createReconnectTriggerAttribute(self):
         attr = PyTango.Attr("Reconnect_Trigger", PyTango.DevDouble, PyTango.AttrWriteType.WRITE)
@@ -443,11 +471,30 @@ class Spin_motors (PyTango.Device_4Impl):
     
     def AskQuestion_thread(self):
         while True:
-            if self.PosZ_question==True:
-                self.PosZ_question=False
+            if self.config_file_warning==True:
+                self.interface_warning=False
                 root = tk.Tk()
                 root.withdraw()
-                MsgBox = tkMessageBox.showinfo ('Warning!','Please set position of this axis',icon = 'warning')                
+                MsgBox = tkMessageBox.showinfo ('Warning!','wrong_configuration file',icon = 'warning')
+                root.destroy()
+            if self.interface_warning==True:
+                self.interface_warning=False
+                root = tk.Tk()
+                root.withdraw()
+                MsgBox = tkMessageBox.showinfo ('Warning!','cosse interface for connection',icon = 'warning')
+                root.destroy()
+            if self.connection_warning==True:
+                self.connection_warning=False
+                root = tk.Tk()
+                root.withdraw()
+                MsgBox = tkMessageBox.showinfo ('Warning!','motors are not connected',icon = 'warning')
+                root.destroy()
+            if self.PosZ_warning==True:
+                self.PosZ_warning=False
+                root = tk.Tk()
+                root.withdraw()
+                MsgBox = tkMessageBox.showinfo ('Warning!','Please set position of this axis',icon = 'warning')
+                root.destroy()
             if self._insert==True and self.action(MOTORS["Z"])==True:
                 self._insert=False
                 root = tk.Tk()
@@ -458,6 +505,7 @@ class Spin_motors (PyTango.Device_4Impl):
                         self.DIS=self.insertZ-self.attr_PosZ_read
                         self.mysend('@{} DIS={}'.format(MOTORS["Z"],str(self.DIS)))
                         self.mysend('@{} MI'.format(MOTORS["Z"]))
+                root.destroy()
             if self._retract==True and self.action(MOTORS["Z"])==True:
                 self._insert=False
                 root = tk.Tk()
@@ -468,18 +516,19 @@ class Spin_motors (PyTango.Device_4Impl):
                         self.DIS=self.retractZ-self.attr_PosZ_read
                         self.mysend('@{} DIS={}'.format(MOTORS["Z"],str(self.DIS)))
                         self.mysend('@{} MI'.format(MOTORS["Z"]))
-        
+                root.destroy()
             time.sleep(0.1)
             
-    def periodic_device_ping(self):
+    def pool_motor_variables(self):
         
         while True:
-            if self.connected==True:
+            if self.get_state() == PyTango.DevState.ON:
                 for i in range(0,4,1):
                     self.mysend('@'+str(i)+' PC')
                     time.sleep(0.1)
                     PC=self.myreceive().split("\r")
                     if PC[0]=='@{} PC'.format(MOTORS["Z"]):
+                        
                         val = PC[1].split("=")[1].split(" ")[0]
                         if self.attr_PosZ_read==float(val):
                             self.action[i-1]=False
@@ -500,9 +549,6 @@ class Spin_motors (PyTango.Device_4Impl):
                             self.attr_negative_limit_z_read=True
                         else:
                             self.attr_negative_limit_z_read=False
-                            
-                        
-                        print ("lim",IO[6][1])
             else:
                 time.sleep(0.1)
 
@@ -516,6 +562,9 @@ class Spin_motors (PyTango.Device_4Impl):
             totalsent = totalsent + sent
 
     def myreceive(self, timeout=2.0):
+        while self.port_busy==True:
+            time.sleep(0.1)
+        self.port_busy=True
         resp=""
         resp += self.sock.recv(10000)
         tstart = time.time()
@@ -531,6 +580,7 @@ class Spin_motors (PyTango.Device_4Impl):
             if tend-tstart>=timeout:
                 break
         self.last_comm_timeout = (tend-tstart>=timeout)
+        self.port_busy=False
         return resp
 
     #----- PROTECTED REGION END -----#	//	Spin_motors.programmer_methods
