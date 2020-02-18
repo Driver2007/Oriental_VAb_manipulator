@@ -59,6 +59,8 @@ if sys.version_info[0] == 2:
 else:
     import configparser
 from ipaddress import ip_address
+
+from pylink import TCPLink
 MOTORS = {
     "X":"0",
     "Y":"1",
@@ -74,6 +76,8 @@ _MOTORS = {
     4:"THETA"
 }
 WAIT_TIME_UNIT=0.01
+READ_SIZE=4096
+TIMEOUT=0.1
 #----- PROTECTED REGION END -----#	//	Spin_motors.additionnal_import
 
 # Device States Description
@@ -208,7 +212,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.SpeedZ_write) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.mysend("@{} VR={}".format(MOTORS["Z"],str(data)))
+            self.write("@{} VR={}".format(MOTORS["Z"],str(data)))
             self.config.set('motor_Z', "speed", data)
         else:
             self.connection_warning=True
@@ -226,7 +230,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.SetPosZ_write) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.mysend("@{} PC={}".format(MOTORS["Z"],str(data))) 
+            self.write("@{} PC={}".format(MOTORS["Z"],str(data))) 
             self.config.set('motor_Z', "position", data)
         else:
             self.connection_warning=True
@@ -463,8 +467,8 @@ class Spin_motors (PyTango.Device_4Impl):
             else:
                 self.DIS=-self.stepZ
             
-            self.mysend('@{} DIS={}'.format(MOTORS["Z"],str(self.DIS)))
-            self.mysend('@{} MI'.format(MOTORS["Z"]))
+            self.write('@{} DIS={}'.format(MOTORS["Z"],str(self.DIS)))
+            self.write('@{} MI'.format(MOTORS["Z"]))
         else:
             print 1
             self.PosZ_warning=True
@@ -481,8 +485,8 @@ class Spin_motors (PyTango.Device_4Impl):
                 self.DIS=self.limitZpos-self.attr_PosZ_read
             else:
                 self.DIS=self.stepZ
-            self.mysend('@{} DIS={}'.format(MOTORS["Z"],str(self.DIS)))
-            self.mysend('@{} MI'.format(MOTORS["Z"]))
+            self.write('@{} DIS={}'.format(MOTORS["Z"],str(self.DIS)))
+            self.write('@{} MI'.format(MOTORS["Z"]))
         else:
             self.PosZ_warning=True
         #----- PROTECTED REGION END -----#	//	Spin_motors.MoveZ_out
@@ -492,7 +496,7 @@ class Spin_motors (PyTango.Device_4Impl):
         """
         self.debug_stream("In almclr_z()")
         #----- PROTECTED REGION ID(Spin_motors.almclr_z) ENABLED START -----#
-        self.mysend('@{} ALMCLR'.format(MOTORS["Z"]))
+        self.write('@{} ALMCLR'.format(MOTORS["Z"]))
         #----- PROTECTED REGION END -----#	//	Spin_motors.almclr_z
         
     def connect(self):
@@ -500,56 +504,16 @@ class Spin_motors (PyTango.Device_4Impl):
         """
         self.debug_stream("In connect()")
         #----- PROTECTED REGION ID(Spin_motors.connect) ENABLED START -----#
-        if "general_settings" in self.config.sections():
-            device=str(self)
-            device=device[device.index("(")+1:device.index(")")]
-            device_server=PyTango.DeviceProxy(device)
-            if self.config.get('general_settings','connect_via_ethernet')=="True":
-                device_server.write_attribute("connect_via_ethernet",True)
-            else:
-                device_server.write_attribute("connect_via_ethernet",False)
-                
-            if self.config.get("general_settings","connect_via_serial")=="True":
-                device_server.write_attribute("connect_via_serial",True)
-            else:
-                device_server.write_attribute("connect_via_serial",False)
-        else:
-            self.config_file_warning=True
-            return 0
-            
-        if  'connect_via_ehternet' in dir(self) and self.connect_via_ehternet==True:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.last_comm_timeout = False
-            host=self.host_ip
-            port=self.port
-            try:
-                self.sock.setblocking(1)
-            except:
-                pass
-            try:
-                self.sock.connect((host, port))
-            except Exception as e:
-                self.connected = False
-                print ("connected",self.connected)
-            else:
-                self.connected = True
-                print ("connected",self.connected)
-                self.sock.setblocking(0)
-                self.mysend('@1ECHO')
-        elif  'connect_via_serial' in dir(self) and self.connect_via_serial==True:
-            pass
-        else:
-            self.interface_warning=True
-        
+        self.tcp = TCPLink(self.host_ip, self.port)
+        self.write('@1ECHO')
         i=0
-        while i<256 and self.connected==True:
-            self.mysend('@{}ID'.format(str(i)))
-            time.sleep(0.1)
-            ID=self.myreceive()
+        while i<10:
+            ID=self.write_and_read('@{}ID'.format(str(i)))
+            print i
             if ID.find("=")!=-1:
                 self.device_id.append(i)
             else:
-                break
+                pass
             i+=1
         print ("found {} controller(s)".format(str(i)))
         if i!=0:
@@ -627,8 +591,8 @@ class Spin_motors (PyTango.Device_4Impl):
             else:
                 self.DIS=-self.stepZ
             
-            self.mysend('@{} DIS={}'.format(MOTORS["Z"],str(self.DIS)))
-            self.mysend('@{} MI'.format(MOTORS["Z"]))
+            self.write('@{} DIS={}'.format(MOTORS["Z"],str(self.DIS)))
+            self.write('@{} MI'.format(MOTORS["Z"]))
         else:
             print 1
             self.PosZ_warning=True
@@ -640,7 +604,7 @@ class Spin_motors (PyTango.Device_4Impl):
         """
         self.debug_stream("In almclr_x()")
         #----- PROTECTED REGION ID(Spin_motors.almclr_x) ENABLED START -----#
-        self.mysend('@{} ALMCLR'.format(MOTORS["X"]))
+        self.write('@{} ALMCLR'.format(MOTORS["X"]))
         #----- PROTECTED REGION END -----#	//	Spin_motors.almclr_x
         
     def almclr_y(self):
@@ -648,7 +612,7 @@ class Spin_motors (PyTango.Device_4Impl):
         """
         self.debug_stream("In almclr_y()")
         #----- PROTECTED REGION ID(Spin_motors.almclr_y) ENABLED START -----#
-        self.mysend('@{} ALMCLR'.format(MOTORS["Y"]))
+        self.write('@{} ALMCLR'.format(MOTORS["Y"]))
         #----- PROTECTED REGION END -----#	//	Spin_motors.almclr_y
         
     def StopZ(self):
@@ -657,7 +621,7 @@ class Spin_motors (PyTango.Device_4Impl):
         self.debug_stream("In StopZ()")
         #----- PROTECTED REGION ID(Spin_motors.StopZ) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.mysend('@{}SSTOP'.format(MOTORS["Z"]))
+            self.write('@{}SSTOP'.format(MOTORS["Z"]))
         #----- PROTECTED REGION END -----#	//	Spin_motors.StopZ
         
     def StopX(self):
@@ -666,7 +630,7 @@ class Spin_motors (PyTango.Device_4Impl):
         self.debug_stream("In StopX()")
         #----- PROTECTED REGION ID(Spin_motors.StopX) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.mysend('@{}SSTOP'.format(MOTORS["X"]))        
+            self.write('@{}SSTOP'.format(MOTORS["X"]))        
         #----- PROTECTED REGION END -----#	//	Spin_motors.StopX
         
     def StopY(self):
@@ -675,7 +639,7 @@ class Spin_motors (PyTango.Device_4Impl):
         self.debug_stream("In StopY()")
         #----- PROTECTED REGION ID(Spin_motors.StopY) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.mysend('@{}SSTOP'.format(MOTORS["Y"]))        
+            self.write('@{}SSTOP'.format(MOTORS["Y"]))        
         #----- PROTECTED REGION END -----#	//	Spin_motors.StopY
         
     def StopPhi(self):
@@ -684,7 +648,7 @@ class Spin_motors (PyTango.Device_4Impl):
         self.debug_stream("In StopPhi()")
         #----- PROTECTED REGION ID(Spin_motors.StopPhi) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.mysend('@{}SSTOP'.format(MOTORS["PHI"]))        
+            self.write('@{}SSTOP'.format(MOTORS["PHI"]))        
         #----- PROTECTED REGION END -----#	//	Spin_motors.StopPhi
         
     def StopTheta(self):
@@ -693,7 +657,7 @@ class Spin_motors (PyTango.Device_4Impl):
         self.debug_stream("In StopTheta()")
         #----- PROTECTED REGION ID(Spin_motors.StopTheta) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.mysend('@{}SSTOP'.format(MOTORS["THETA"]))    
+            self.write('@{}SSTOP'.format(MOTORS["THETA"]))    
         #----- PROTECTED REGION END -----#	//	Spin_motors.StopTheta
         
     def StopAll(self):
@@ -703,7 +667,7 @@ class Spin_motors (PyTango.Device_4Impl):
         #----- PROTECTED REGION ID(Spin_motors.StopAll) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
             for i in range(len(MOTORS)):
-                self.mysend('@{}SSTOP'.format(str(i)))
+                self.write('@{}SSTOP'.format(str(i)))
 
         #----- PROTECTED REGION END -----#	//	Spin_motors.StopAll
         
@@ -712,8 +676,68 @@ class Spin_motors (PyTango.Device_4Impl):
         """
         self.debug_stream("In almclr_phi()")
         #----- PROTECTED REGION ID(Spin_motors.almclr_phi) ENABLED START -----#
-        self.mysend('@{} ALMCLR'.format(MOTORS["PHI"]))
+        self.write('@{} ALMCLR'.format(MOTORS["PHI"]))
         #----- PROTECTED REGION END -----#	//	Spin_motors.almclr_phi
+        
+    def write(self, argin):
+        """ write command to motors
+        :param argin: 
+        :type argin: PyTango.DevString
+        """
+        self.debug_stream("In write()")
+        #----- PROTECTED REGION ID(Spin_motors.write) ENABLED START -----#
+        argin=argin+'\r'
+        print argin 
+        try:
+            self.tcp.write(argin)
+            time.sleep(0.004)
+        except:
+            #self.reconnect()
+            try:
+                self.tcp.write(argin)
+                time.sleep(0.004)
+            except:
+                print('Timeout while writing to "{}"!'.format(type(self).__name__))
+                raise        
+        #----- PROTECTED REGION END -----#	//	Spin_motors.write
+        
+    def read(self):
+        """ read answers from motors
+        :rtype: PyTango.DevString
+        """
+        self.debug_stream("In read()")
+        argout = ""
+        #----- PROTECTED REGION ID(Spin_motors.read) ENABLED START -----#
+        try:
+            time1=time.time()
+            argout = self.tcp.read(READ_SIZE,TIMEOUT)
+            print "read_time",time.time()-time1
+        except:
+            print('First reading attempt failed on "{}", trying again...'.format(type(self).__name__))
+            try:
+                argout = self.tcp.read(READ_SIZE,TIMEOUT)
+            except:
+                print('Timeout while reading from "{}"!'.format(type(self).__name__))
+                raise
+        print argout
+        argout = argout.replace('\r', '')
+        argout = argout.replace('\n', '')
+        #----- PROTECTED REGION END -----#	//	Spin_motors.read
+        return argout
+        
+    def write_and_read(self, argin):
+        """ 
+        :param argin: 
+        :type argin: PyTango.DevString
+        :rtype: PyTango.DevString
+        """
+        self.debug_stream("In write_and_read()")
+        argout = ""
+        #----- PROTECTED REGION ID(Spin_motors.write_and_read) ENABLED START -----#
+        self.write(argin)
+        argout=self.read()
+        #----- PROTECTED REGION END -----#	//	Spin_motors.write_and_read
+        return argout
         
 
     #----- PROTECTED REGION ID(Spin_motors.programmer_methods) ENABLED START -----#
@@ -773,7 +797,7 @@ class Spin_motors (PyTango.Device_4Impl):
                 MsgBox = tkMessageBox.askquestion ('Insert spin filter','You are about to insert spin filter.\r Are you sure? Is valve open?',icon = 'warning')
                 if MsgBox == 'yes' and self.attr_motor_z_action_read==False:
                     if self.get_state() == PyTango.DevState.ON:
-                        self.mysend('@{} MA {}'.format(MOTORS["Z"],str(self.attr_insert_z_pos_read)))
+                        self.write('@{} MA {}'.format(MOTORS["Z"],str(self.attr_insert_z_pos_read)))
                 root.destroy()
             if self._retract==True:
                 self._insert=False
@@ -782,7 +806,7 @@ class Spin_motors (PyTango.Device_4Impl):
                 MsgBox = tkMessageBox.askquestion ('Insert spin filter','You are about to retract spin filter.\r Are you sure?',icon = 'warning')
                 if MsgBox == 'yes' and self.attr_motor_z_action_read==False:
                     if self.get_state() == PyTango.DevState.ON:
-                        self.mysend('@{} MA {}'.format(MOTORS["Z"],str(self.attr_retract_z_pos_read)))
+                        self.write('@{} MA {}'.format(MOTORS["Z"],str(self.attr_retract_z_pos_read)))
                 root.destroy()
             time.sleep(0.1)
             
@@ -790,9 +814,7 @@ class Spin_motors (PyTango.Device_4Impl):
         while True:
             if self.get_state() == PyTango.DevState.ON:
                 for i in range(0,4,1):
-                    self.mysend('@'+str(i)+' PC')
-                    time.sleep(0.1)
-                    PC=self.myreceive().split("\r")
+                    PC=self.write_and_read('@'+str(i)+' PC')
                     if PC[0]=='@{} PC'.format(MOTORS["Z"]):
                         val = PC[1].split("=")[1].split(" ")[0]
                         if self.attr_PosZ_read==float(val):
@@ -800,58 +822,29 @@ class Spin_motors (PyTango.Device_4Impl):
                         else:
                             self.attr_PosZ_read=float(val)
                             self.attr_motor_z_action_read=True
+                        print 'motor_{}='.format(_MOTORS[i]),self.attr_PosZ_read
                         self.config.set('motor_{}'.format(_MOTORS[i]), "position", self.attr_PosZ_read)
                 for i in range(0,5,1):
-                    self.mysend('@{} IO'.format(str(i)))
-                    time.sleep(0.1)
-                    IO=self.myreceive().split("\n")
+                    IO=self.write_and_read('@{} IO'.format(str(i)))
                     if MOTORS["Z"]==str(i):
-                        if int(IO[6][1])==1:
-                            self.attr_positive_limit_z_read=True
-                        else:
-                            self.attr_positive_limit_z_read=False
+                        try:
+                            if int(IO[6][1])==1:
+                                self.attr_positive_limit_z_read=True
+                            else:
+                                self.attr_positive_limit_z_read=False
                         
-                        if int(IO[6][3])==1:
-                            self.attr_negative_limit_z_read=True
-                        else:
-                            self.attr_negative_limit_z_read=False
+                            if int(IO[6][3])==1:
+                                self.attr_negative_limit_z_read=True
+                            else:
+                                self.attr_negative_limit_z_read=False
+                        except:
+                            print IO
+                            pass
                 with open('settings.ini', 'w') as configfile:
                     self.config.write(configfile)
                 
             else:
                 time.sleep(0.1)
-
-    def mysend(self, msg):
-        totalsent = 0
-        msg+='\r'
-        while totalsent < len(msg):
-            sent = self.sock.send(msg)
-            if sent == 0:
-                raise RuntimeError("socket connection broken")
-            totalsent = totalsent + sent
-
-    def myreceive(self, timeout=2.0):
-        while self.port_busy==True:
-            time.sleep(0.1)
-        self.port_busy=True
-        resp=""
-        resp += self.sock.recv(10000)
-        tstart = time.time()
-        tend = tstart
-            # really wait (block!) until end-of-line character is reached
-        while len(resp)==0 or resp[len(resp)-1]!='>':
-            try:
-                resp += self.sock.recv(10000)
-            except socket.error:
-                pass
-            time.sleep(WAIT_TIME_UNIT)
-            tend = time.time()
-            if tend-tstart>=timeout:
-                break
-        self.last_comm_timeout = (tend-tstart>=timeout)
-        self.port_busy=False
-        return resp
-
     #----- PROTECTED REGION END -----#	//	Spin_motors.programmer_methods
 
 class Spin_motorsClass(PyTango.DeviceClass):
@@ -944,6 +937,15 @@ class Spin_motorsClass(PyTango.DeviceClass):
         'almclr_phi':
             [[PyTango.DevVoid, "none"],
             [PyTango.DevVoid, "none"]],
+        'write':
+            [[PyTango.DevString, "none"],
+            [PyTango.DevVoid, "none"]],
+        'read':
+            [[PyTango.DevVoid, "none"],
+            [PyTango.DevString, "none"]],
+        'write_and_read':
+            [[PyTango.DevString, "none"],
+            [PyTango.DevString, "none"]],
         }
 
 
@@ -954,17 +956,25 @@ class Spin_motorsClass(PyTango.DeviceClass):
             PyTango.SCALAR,
             PyTango.READ],
             {
-                'max value': "12.5",
-                'min value': "-12.5",
+                'max value': "300",
+                'min value': "0",
             } ],
         'StepZ':
             [[PyTango.DevDouble,
             PyTango.SCALAR,
-            PyTango.WRITE]],
+            PyTango.WRITE],
+            {
+                'max value': "300",
+                'min value': "0",
+            } ],
         'SpeedZ':
             [[PyTango.DevDouble,
             PyTango.SCALAR,
-            PyTango.WRITE]],
+            PyTango.WRITE],
+            {
+                'max value': "4",
+                'min value': "0",
+            } ],
         'StopZ':
             [[PyTango.DevDouble,
             PyTango.SCALAR,
@@ -972,15 +982,28 @@ class Spin_motorsClass(PyTango.DeviceClass):
         'SetPosZ':
             [[PyTango.DevDouble,
             PyTango.SCALAR,
-            PyTango.WRITE]],
+            PyTango.WRITE],
+            {
+                'max value': "300",
+                'min value': "0",
+            } ],
         'insert_z_pos':
             [[PyTango.DevDouble,
             PyTango.SCALAR,
-            PyTango.READ_WRITE]],
+            PyTango.READ_WRITE],
+            {
+                'max value': "300",
+                'min value': "0",
+            } ],
         'retract_z_pos':
             [[PyTango.DevDouble,
             PyTango.SCALAR,
-            PyTango.READ_WRITE]],
+            PyTango.READ_WRITE],
+            {
+                'unit': "mm",
+                'max value': "300",
+                'min value': "0",
+            } ],
         'positive_limit_z':
             [[PyTango.DevBoolean,
             PyTango.SCALAR,
@@ -1008,7 +1031,11 @@ class Spin_motorsClass(PyTango.DeviceClass):
         'StepX':
             [[PyTango.DevDouble,
             PyTango.SCALAR,
-            PyTango.WRITE]],
+            PyTango.WRITE],
+            {
+                'max value': "8",
+                'min value': "0",
+            } ],
         'SpeedX':
             [[PyTango.DevDouble,
             PyTango.SCALAR,
