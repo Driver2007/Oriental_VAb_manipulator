@@ -46,7 +46,7 @@ import PyTango
 import sys
 # Add additional import
 #----- PROTECTED REGION ID(Spin_motors.additionnal_import) ENABLED START -----#
-import socket
+import serial
 import time
 import threading
 from threading import RLock
@@ -62,6 +62,8 @@ from ipaddress import ip_address
 
 from pylink import TCPLink
 import pygame
+import pdb
+
 MOTORS = {
     "X":"0",
     "Y":"1",
@@ -243,7 +245,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.StopZ_write) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.write("@{} SSTOP".format(MOTORS["Z"])) 
+            self.write("@{} HSTOP".format(MOTORS["Z"])) 
         #----- PROTECTED REGION END -----#	//	Spin_motors.StopZ_write
         
     def write_SetPosZ(self, attr):
@@ -374,7 +376,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.StopX_write) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.write("@{} SSTOP".format(MOTORS["X"]))        
+            self.write("@{} HSTOP".format(MOTORS["X"]))        
         #----- PROTECTED REGION END -----#	//	Spin_motors.StopX_write
         
     def write_SetPosX(self, attr):
@@ -448,7 +450,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.StopY_write) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.write("@{} SSTOP".format(MOTORS["Y"]))        
+            self.write("@{} HSTOP".format(MOTORS["Y"]))        
         #----- PROTECTED REGION END -----#	//	Spin_motors.StopY_write
         
     def write_SetPosY(self, attr):
@@ -565,20 +567,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.move_X_pos_write) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.write("@{} VR={}".format(MOTORS["X"],str(self.attr_SpeedX_read)))
-            if self.attr_negative_limit_X_read==True:
-                self.write('@{} ALMCLR'.format(MOTORS["X"]))
-            elif self.attr_positive_limit_Y_read==True:
-                self.limit_warning=True
-                return
-            if self.attr_PosX_read+self.stepX>self.attr_max_X_read:
-                DIS=self.attr_max_X_read-self.attr_PosX_read
-            else:
-                DIS=self.stepX
-            self.write('@{} DIS={}'.format(MOTORS["X"],str(DIS)))
-            self.write('@{} MI'.format(MOTORS["X"]))
-        else:
-            self.PosX_warning=True
+            self.move_motor("X", 1)      
         #----- PROTECTED REGION END -----#	//	Spin_motors.move_X_pos_write
         
     def write_move_X_neg(self, attr):
@@ -586,15 +575,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.move_X_neg_write) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.write("@{} VR={}".format(MOTORS["X"],str(self.attr_SpeedX_read)))
-            if self.attr_PosX_read-self.stepX<self.attr_min_X_read:
-                DIS=self.attr_min_X_read-self.attr_PosX_read
-            else:
-                DIS=-self.stepX
-            self.write('@{} DIS={}'.format(MOTORS["X"],str(DIS)))
-            self.write('@{} MI'.format(MOTORS["X"]))
-        else:
-            self.PosX_warning=True          
+            self.move_motor("X", -1)      
         #----- PROTECTED REGION END -----#	//	Spin_motors.move_X_neg_write
         
     def write_move_Y_pos(self, attr):
@@ -602,20 +583,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.move_Y_pos_write) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.write("@{} VR={}".format(MOTORS["Y"],str(self.attr_SpeedY_read)))
-            if self.attr_negative_limit_Y_read==True:
-                self.write('@{} ALMCLR'.format(MOTORS["Y"]))
-            elif self.attr_positive_limit_Y_read==True:
-                self.limit_warning=True
-                return
-            if self.attr_PosY_read+self.stepY>self.attr_max_Y_read:
-                DIS=self.attr_max_Y_read-self.attr_PosY_read
-            else:
-                DIS=self.stepY
-            self.write('@{} DIS={}'.format(MOTORS["Y"],str(DIS)))
-            self.write('@{} MI'.format(MOTORS["Y"]))
-        else:
-            self.PosX_warning=True        
+            self.move_motor("Y", 1)       
         #----- PROTECTED REGION END -----#	//	Spin_motors.move_Y_pos_write
         
     def write_move_Y_neg(self, attr):
@@ -623,41 +591,16 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.move_Y_neg_write) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.write("@{} VR={}".format(MOTORS["Y"],str(self.attr_SpeedY_read)))
-            if self.attr_positive_limit_Y_read==True:
-                self.write('@{} ALMCLR'.format(MOTORS["Y"]))
-            elif self.attr_negative_limit_Y_read==True:
-                self.limit_warning=True
-                return
-            if self.attr_PosY_read-self.stepY<self.attr_min_Y_read:
-                DIS=self.attr_min_Y_read-self.attr_PosY_read
-            else:
-                DIS=-self.stepY
-            self.write('@{} DIS={}'.format(MOTORS["Y"],str(DIS)))
-            self.write('@{} MI'.format(MOTORS["Y"]))
-        else:
-            self.PosX_warning=True          
+            self.move_motor("Y", -1)      
         #----- PROTECTED REGION END -----#	//	Spin_motors.move_Y_neg_write
         
     def write_move_Z_pos(self, attr):
         self.debug_stream("In write_move_Z_pos()")
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.move_Z_pos_write) ENABLED START -----#
+        print data
         if self.get_state() == PyTango.DevState.ON:
-            self.write("@{} VR={}".format(MOTORS["Z"],str(self.attr_SpeedZ_read)))
-            if self.attr_negative_limit_Z_read==True:
-                self.write('@{} ALMCLR'.format(MOTORS["Z"]))
-            elif self.attr_positive_limit_Z_read==True:
-                self.limit_warning=True
-                return
-            if self.attr_PosZ_read+self.stepZ>self.attr_max_Z_read:
-                DIS=self.attr_max_Z_read-self.attr_PosZ_read
-            else:
-                DIS=self.stepZ
-            self.write('@{} DIS={}'.format(MOTORS["Z"],str(DIS)))
-            self.write('@{} MI'.format(MOTORS["Z"]))
-        else:
-            self.PosZ_warning=True        
+            self.move_motor("Z", 1)
         #----- PROTECTED REGION END -----#	//	Spin_motors.move_Z_pos_write
         
     def write_move_Z_neg(self, attr):
@@ -665,21 +608,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.move_Z_neg_write) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.write("@{} VR={}".format(MOTORS["Z"],str(self.attr_SpeedZ_read)))
-            if self.attr_positive_limit_Z_read==True:
-                self.write('@{} ALMCLR'.format(MOTORS["Z"]))
-            elif self.attr_negative_limit_Z_read==True:
-                self.limit_warning=True
-                return
-            if self.attr_PosZ_read-self.stepZ<self.attr_min_Z_read:
-                DIS=self.attr_min_Z_read-self.attr_PosZ_read
-            else:
-                DIS=-self.stepZ
-            
-            self.write('@{} DIS={}'.format(MOTORS["Z"],str(DIS)))
-            self.write('@{} MI'.format(MOTORS["Z"]))
-        else:
-            self.PosZ_warning=True        
+            self.move_motor("Z", -1)
         #----- PROTECTED REGION END -----#	//	Spin_motors.move_Z_neg_write
         
     def write_move_PHI_pos(self, attr):
@@ -687,15 +616,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.move_PHI_pos_write) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            self.write("@{} VR={}".format(MOTORS["PHI"],str(self.attr_SpeedPHI_read)))
-            if self.attr_PosPHI_read+self.stepPHI>self.attr_max_PHI_read:
-                DIS=self.attr_max_PHI_read-self.attr_PosPHI_read
-            else:
-                DIS=self.stepPHI
-            self.write('@{} DIS={}'.format(MOTORS["PHI"],str(DIS)))
-            self.write('@{} MI'.format(MOTORS["PHI"]))
-        else:
-            self.PosZ_warning=True          
+            self.move_motor("PHI", 1)             
         #----- PROTECTED REGION END -----#	//	Spin_motors.move_PHI_pos_write
         
     def write_move_PHI_neg(self, attr):
@@ -703,29 +624,23 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.move_PHI_neg_write) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
-            if self.attr_PosPHI_read-self.stepPHI<self.attr_min_PHI_read:
-                DIS=self.attr_min_PHI_read-self.attr_PosPHI_read
-            else:
-                DIS=-self.stepPHI
-            
-            self.write('@{} DIS={}'.format(MOTORS["PHI"],str(DIS)))
-            self.write('@{} MI'.format(MOTORS["PHI"]))
-        else:
-            self.PosZ_warning=True          
+            self.move_motor("PHI", -1)              
         #----- PROTECTED REGION END -----#	//	Spin_motors.move_PHI_neg_write
         
     def write_move_THETA_pos(self, attr):
         self.debug_stream("In write_move_THETA_pos()")
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.move_THETA_pos_write) ENABLED START -----#
-        
+        if self.get_state() == PyTango.DevState.ON:
+            self.move_motor("THETA", 1)
         #----- PROTECTED REGION END -----#	//	Spin_motors.move_THETA_pos_write
         
     def write_move_THETA_neg(self, attr):
         self.debug_stream("In write_move_THETA_neg()")
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.move_THETA_neg_write) ENABLED START -----#
-        
+        if self.get_state() == PyTango.DevState.ON:
+            self.move_motor("THETA", -1)
         #----- PROTECTED REGION END -----#	//	Spin_motors.move_THETA_neg_write
         
     def read_max_X(self, attr):
@@ -740,6 +655,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.max_X_write) ENABLED START -----#
         self.attr_max_X_read=data
+        self.max[int(MOTORS["X"])]=data
         self.config.set('motor_X', "max", self.attr_max_X_read)
         #----- PROTECTED REGION END -----#	//	Spin_motors.max_X_write
         
@@ -755,6 +671,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.min_X_write) ENABLED START -----#
         self.attr_min_X_read=data
+        self.min[int(MOTORS["X"])]=data
         self.config.set('motor_X', "min", self.attr_min_X_read)
         #----- PROTECTED REGION END -----#	//	Spin_motors.min_X_write
         
@@ -770,6 +687,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.max_Y_write) ENABLED START -----#
         self.attr_max_Y_read=data
+        self.max[int(MOTORS["Y"])]=data
         self.config.set('motor_Y', "max", self.attr_max_Y_read)
         #----- PROTECTED REGION END -----#	//	Spin_motors.max_Y_write
         
@@ -785,6 +703,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.min_Y_write) ENABLED START -----#
         self.attr_min_Y_read=data
+        self.min[int(MOTORS["Y"])]=data
         self.config.set('motor_Y', "min", self.attr_min_Y_read)
         #----- PROTECTED REGION END -----#	//	Spin_motors.min_Y_write
         
@@ -800,6 +719,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.max_Z_write) ENABLED START -----#
         self.attr_max_Z_read=data
+        self.max[int(MOTORS["Z"])]=data
         self.config.set('motor_Z', "max", self.attr_max_Z_read)
         #----- PROTECTED REGION END -----#	//	Spin_motors.max_Z_write
         
@@ -815,6 +735,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.min_Z_write) ENABLED START -----#
         self.attr_min_Z_read=data
+        self.min[int(MOTORS["Z"])]=data
         self.config.set('motor_Z', "min", self.attr_min_Z_read)
         #----- PROTECTED REGION END -----#	//	Spin_motors.min_Z_write
         
@@ -830,6 +751,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.max_PHI_write) ENABLED START -----#
         self.attr_max_PHI_read=data
+        self.max[int(MOTORS["PHI"])]=data
         self.config.set('motor_PHI', "max", self.attr_max_PHI_read)        
         #----- PROTECTED REGION END -----#	//	Spin_motors.max_PHI_write
         
@@ -845,6 +767,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.min_PHI_write) ENABLED START -----#
         self.attr_min_PHI_read=data
+        self.min[int(MOTORS["PHI"])]=data
         self.config.set('motor_PHI', "min", self.attr_min_PHI_read)        
         #----- PROTECTED REGION END -----#	//	Spin_motors.min_PHI_write
         
@@ -860,6 +783,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.max_Theta_write) ENABLED START -----#
         self.attr_max_Theta_read=data
+        self.max[int(MOTORS["THETA"])]=data
         self.config.set('motor_THETA', "max", self.attr_max_Theta_read)
         #----- PROTECTED REGION END -----#	//	Spin_motors.max_Theta_write
         
@@ -875,6 +799,7 @@ class Spin_motors (PyTango.Device_4Impl):
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.min_Theta_write) ENABLED START -----#
         self.attr_min_Theta_read=data
+        self.min[int(MOTORS["THETA"])]=data
         self.config.set('motor_THETA', "min", self.attr_min_Theta_read)        
         #----- PROTECTED REGION END -----#	//	Spin_motors.min_Theta_write
         
@@ -891,7 +816,7 @@ class Spin_motors (PyTango.Device_4Impl):
         #----- PROTECTED REGION ID(Spin_motors.StopAll_write) ENABLED START -----#
         if self.get_state() == PyTango.DevState.ON:
             for i in range(len(MOTORS)):
-                self.write('@{}SSTOP'.format(str(i)))        
+                self.write('@{}HSTOP'.format(str(i)))        
         #----- PROTECTED REGION END -----#	//	Spin_motors.StopAll_write
         
     def write_StepPHI(self, attr):
@@ -1076,8 +1001,21 @@ class Spin_motors (PyTango.Device_4Impl):
         self.debug_stream("In write_connect()")
         data = attr.get_write_value()
         #----- PROTECTED REGION ID(Spin_motors.connect_write) ENABLED START -----#
-        if data==True and self.get_state() != PyTango.DevState.ON:
-            self.tcp = TCPLink(self.host_ip, self.port)
+        if self.get_state() != PyTango.DevState.ON:
+            if self.connect_via_serial==True and self.connect_via_ethernet==True:
+                return
+            elif self.connect_via_serial==True:
+                print self.serial_port
+                BAUDRATE = 115200
+                PARITY = 'N'
+                STOPBITS = 1
+                BYTESIZE = 8
+                TIMEOUT = 0.1 # in seconds when reading from the device
+                DEFAULT_COMPORT = "/dev/ttyUSB0"
+                self.tcp = serial.Serial(self.serial_port, baudrate=BAUDRATE, parity=PARITY, stopbits=STOPBITS, bytesize=BYTESIZE, timeout=TIMEOUT)
+                self.busy=False
+            elif self.connect_via_ethernet:
+                self.tcp = TCPLink(self.host_ip, self.port)
             self.write('@1ECHO')
             i=0
             while i<256:
@@ -1088,11 +1026,13 @@ class Spin_motors (PyTango.Device_4Impl):
                     break
                 i+=1
             self.number_of_motors=i
-            print ("found {} controller(s)".format(str(self.number_of_motors)))
+            print ("found {} controller(s)".format(str(self.number_of_motors))),
             if i!=0:
                 self.position_of_motor=[0.0]*(i)
-                self.speed[0.0]*(i)
-                self.step[0.0]*(i)
+                self.speed=[0.0]*(i)
+                self.step=[0.0]*(i)
+                self.min=[0.0]*(i)
+                self.max=[0.0]*(i)
                 self.position_error_of_motor=[0.0]*(i)
                 self.positive_limit_of_motor=[False]*(i)
                 self.negative_limit_of_motor=[False]*(i)
@@ -1161,9 +1101,11 @@ class Spin_motors (PyTango.Device_4Impl):
                 device_server.write_attribute("max_{}".format(_MOTORS[i]).format(_MOTORS[i]),self.config.getfloat("motor_{}".format(_MOTORS[i]), "max"))
                 device_server.write_attribute("min_{}".format(_MOTORS[i]),self.config.getfloat("motor_{}".format(_MOTORS[i]), "min"))
             else:
+                self.set_state(PyTango.DevState.FAULT)
                 self.config_file_warning=True
         if self.get_state() == PyTango.DevState.ON:
             self.config_loaded=True
+            print True
         #----- PROTECTED REGION END -----#	//	Spin_motors.config_load
         
     def write(self, argin):
@@ -1174,17 +1116,32 @@ class Spin_motors (PyTango.Device_4Impl):
         self.debug_stream("In write()")
         #----- PROTECTED REGION ID(Spin_motors.write) ENABLED START -----#
         argin=argin+'\r'
-        try:
-            self.tcp.write(argin)
-            time.sleep(0.004)
-        except:
-            #self.reconnect()
+        if self.connect_via_ethernet:
             try:
                 self.tcp.write(argin)
                 time.sleep(0.004)
             except:
-                print('Timeout while writing to "{}"!'.format(type(self).__name__))
-                raise        
+                #self.reconnect()
+                try:
+                    self.tcp.write(argin)
+                    time.sleep(0.004)
+                except:
+                    print('Timeout while writing to "{}"!'.format(type(self).__name__))
+                    raise
+        elif self.connect_via_serial:
+            if not self.tcp or not self.tcp.isOpen():
+                return
+            while (self.busy):
+                time.sleep(0.02)
+            self.busy = True
+            try:
+                s=argin.strip('\n\r')+"\r\n"
+                self.tcp.write(s)
+            except:
+                self.busy = False
+                raise
+            finally:
+                self.busy = False    
         #----- PROTECTED REGION END -----#	//	Spin_motors.write
         
     def read(self):
@@ -1194,19 +1151,19 @@ class Spin_motors (PyTango.Device_4Impl):
         self.debug_stream("In read()")
         argout = ""
         #----- PROTECTED REGION ID(Spin_motors.read) ENABLED START -----#
-        try:
-            #time1=time.time()
-            argout = self.tcp.read(READ_SIZE,TIMEOUT)
-            #print "read_time",time.time()-time1
-        except:
-            print('First reading attempt failed on "{}", trying again...'.format(type(self).__name__))
+        if self.connect_via_ethernet:
             try:
+                #time1=time.time()
                 argout = self.tcp.read(READ_SIZE,TIMEOUT)
+                #print "read_time",time.time()-time1
             except:
-                print('Timeout while reading from "{}"!'.format(type(self).__name__))
-                raise
-        #argout = argout.replace('\r', '')
-        #argout = argout.replace('\n', '')
+                print('First reading attempt failed on "{}", trying again...'.format(type(self).__name__))
+                try:
+                    argout = self.tcp.read(READ_SIZE,TIMEOUT)
+                except:
+                    print('Timeout while reading from "{}"!'.format(type(self).__name__))
+                    raise
+
         #----- PROTECTED REGION END -----#	//	Spin_motors.read
         return argout
         
@@ -1219,42 +1176,74 @@ class Spin_motors (PyTango.Device_4Impl):
         self.debug_stream("In write_and_read()")
         argout = ""
         #----- PROTECTED REGION ID(Spin_motors.write_and_read) ENABLED START -----#
-        self.write(argin)
-        argout=self.read()
+        if self.connect_via_ethernet: 
+           self.write(argin)
+           argout=self.read()
+        elif self.connect_via_serial:
+            argout=self.write_and_read_ser(argin)
+            
         #----- PROTECTED REGION END -----#	//	Spin_motors.write_and_read
+        return argout
+        
+    def write_and_read_ser(self, argin):
+        """ 
+        :param argin: 
+        :type argin: PyTango.DevString
+        :rtype: PyTango.DevString
+        """
+        self.debug_stream("In write_and_read_ser()")
+        argout = ""
+        #----- PROTECTED REGION ID(Spin_motors.write_and_read_ser) ENABLED START -----#
+        if not self.tcp or not self.tcp.isOpen():
+            return
+        while (self.busy):
+            time.sleep(0.02)
+        self.busy = True
+        try:
+            s=argin.strip('\n\r')+"\r\n"
+            #s = bytes(s, "utf-8")
+            self.tcp.write(s)
+            #time.sleep(0.1)
+            buf = self.tcp.read(10000) # insecure, should receive until line ending!
+            argout = buf.decode('utf-8')
+        except:
+            self.busy = False
+            raise
+        finally:
+            self.busy = False
+        #----- PROTECTED REGION END -----#	//	Spin_motors.write_and_read_ser
         return argout
         
 
     #----- PROTECTED REGION ID(Spin_motors.programmer_methods) ENABLED START -----#       
 
-    def move_motor(self, axis, direction, step):
+    def move_motor(self, axis, direction):
         if self.get_state() == PyTango.DevState.ON:
             self.write("@{} VR={}".format(MOTORS[axis],str(self.speed[int(MOTORS[axis])])))
-            if direction<0 and self.positive_limit_of_motor[int(MOTORS[axis])]==True:
-                self.write('@{} ALMCLR'.format(MOTORS[axis]))
+            if direction<0:
+                if self.positive_limit_of_motor[int(MOTORS[axis])]==True:
+                    self.write('@{} ALMCLR'.format(MOTORS[axis]))
+                if self.negative_limit_of_motor[int(MOTORS[axis])]==True: 
+                    self.limit_warning=True
+                    return
                 if self.position_of_motor[int(MOTORS[axis])]-self.step[int(MOTORS[axis])]<self.min[int(MOTORS[axis])]:
                     DIS=self.min[int(MOTORS[axis])]-self.position_of_motor[int(MOTORS[axis])]
                 else:
                     DIS=-self.step[int(MOTORS[axis])]
-                self.write('@{} DIS={}'.format(MOTORS[axis],str(DIS)))
-                self.write('@{} MI'.format(MOTORS[axis]))
                 
-            elif direction>0 and self.negative_limit_of_motor[int(MOTORS[axis])]==True:
-                self.write('@{} ALMCLR'.format(MOTORS[axis]))
+            elif direction>0:
+                if self.negative_limit_of_motor[int(MOTORS[axis])]==True:
+                    self.write('@{} ALMCLR'.format(MOTORS[axis]))
+                if self.positive_limit_of_motor[int(MOTORS[axis])]==True:
+                    self.limit_warning=True
+                    return
                 if self.position_of_motor[int(MOTORS[axis])]+self.step[int(MOTORS[axis])]>self.max[int(MOTORS[axis])]:
                     DIS=self.max[int(MOTORS[axis])]-self.position_of_motor[int(MOTORS[axis])]
                 else:
                     DIS=self.step[int(MOTORS[axis])]
-                self.write('@{} DIS={}'.format(MOTORS[axis],str(DIS)))
-                self.write('@{} MI'.format(MOTORS[axis]))
+            self.write('@{} DIS={}'.format(MOTORS[axis],str(DIS)))
+            self.write('@{} MI'.format(MOTORS[axis]))
                 
-            elif direction>0 and self.positive_limit_of_motor[int(MOTORS[axis])]==True:
-                self.limit_warning=True
-                return
-                
-            elif direction>0 and self.negative_limit_of_motor[int(MOTORS[axis])]==True:
-                self.limit_warning=True
-                return
       
     def read_settings(self):
         pass
@@ -1283,6 +1272,9 @@ class Spin_motors (PyTango.Device_4Impl):
         pygame.init()
         clock = pygame.time.Clock()
         action=[False]*5
+        Z=4
+        XY=0.5
+        PHI=10
         while True:            
             if self.joystick_count==0:
                 
@@ -1299,20 +1291,20 @@ class Spin_motors (PyTango.Device_4Impl):
                                 action[2]=True
                                 self.write('@{} MA {}'.format(MOTORS["Z"],str(self.attr_min_Z_read)))
                             else:
-                                speed=round(2*joystick.get_axis( 3 ),3)
+                                speed=round(Z*joystick.get_axis( 3 ),3)
                                 self.write('@{} CV {}'.format(MOTORS["Z"],str(speed)))
                         elif joystick.get_axis( 3 )<0:
                             if action[2]==False:
                                 action[2]=True
                                 self.write('@{} MA {}'.format(MOTORS["Z"],str(self.attr_max_Z_read)))
                             else:
-                                speed=round(2*abs(joystick.get_axis( 3 )),3)
+                                speed=round(Z*abs(joystick.get_axis( 3 )),3)
                                 self.write('@{} CV {}'.format(MOTORS["Z"],str(speed)))
                         elif joystick.get_axis( 3 )==0:
-                            self.write('@{} SSTOP'.format(MOTORS["Z"]))
+                            self.write('@{} HSTOP'.format(MOTORS["Z"]))
                     elif event.type == pygame.JOYBUTTONUP and (joystick.get_button(1)==0 or joystick.get_button(4)==0):
                         action[2]=False
-                        self.write('@{} SSTOP'.format(MOTORS["Z"]))
+                        self.write('@{} HSTOP'.format(MOTORS["Z"]))
 
                     if joystick.get_button(0)==1 and joystick.get_button(4)==1:#X
                         if joystick.get_axis( 3 )>0:
@@ -1320,20 +1312,20 @@ class Spin_motors (PyTango.Device_4Impl):
                                 action[0]=True
                                 self.write('@{} MA {}'.format(MOTORS["X"],str(self.attr_min_X_read)))
                             else:
-                                speed=round(2*joystick.get_axis( 3 ),3)
+                                speed=round(XY*joystick.get_axis( 3 ),3)
                                 self.write('@{} CV {}'.format(MOTORS["X"],str(speed)))
                         elif joystick.get_axis( 3 )<0:
                             if action[0]==False:
                                 action[0]=True
                                 self.write('@{} MA {}'.format(MOTORS["X"],str(self.attr_max_X_read)))
                             else:
-                                speed=round(2*abs(joystick.get_axis( 3 )),3)
+                                speed=round(XY*abs(joystick.get_axis( 3 )),3)
                                 self.write('@{} CV {}'.format(MOTORS["X"],str(speed)))
                         elif joystick.get_axis( 3 )==0:
-                            self.write('@{} SSTOP'.format(MOTORS["X"]))
+                            self.write('@{} HSTOP'.format(MOTORS["X"]))
                     elif event.type == pygame.JOYBUTTONUP and (joystick.get_button(0)==0 or joystick.get_button(4)==0):
                         action[0]=False
-                        self.write('@{} SSTOP'.format(MOTORS["X"]))
+                        self.write('@{} HSTOP'.format(MOTORS["X"]))
 
                     if joystick.get_button(3)==1 and joystick.get_button(4)==1:#Y
                         if joystick.get_axis( 3 )>0:
@@ -1341,20 +1333,20 @@ class Spin_motors (PyTango.Device_4Impl):
                                 action[1]=True
                                 self.write('@{} MA {}'.format(MOTORS["Y"],str(self.attr_min_Y_read)))
                             else:
-                                speed=round(2*joystick.get_axis( 3 ),3)
+                                speed=round(XY*joystick.get_axis( 3 ),3)
                                 self.write('@{} CV {}'.format(MOTORS["Y"],str(speed)))
                         elif joystick.get_axis( 3 )<0:
                             if action[1]==False:
                                 action[1]=True
                                 self.write('@{} MA {}'.format(MOTORS["Y"],str(self.attr_max_Y_read)))
                             else:
-                                speed=round(2*abs(joystick.get_axis( 3 )),3)
+                                speed=round(XY*abs(joystick.get_axis( 3 )),3)
                                 self.write('@{} CV {}'.format(MOTORS["Y"],str(speed)))
                         elif joystick.get_axis( 3 )==0:
-                            self.write('@{} SSTOP'.format(MOTORS["Y"]))
+                            self.write('@{} HSTOP'.format(MOTORS["Y"]))
                     elif event.type == pygame.JOYBUTTONUP and (joystick.get_button(3)==0 or joystick.get_button(4)==0):
                         action[1]=False
-                        self.write('@{} SSTOP'.format(MOTORS["Y"]))               
+                        self.write('@{} HSTOP'.format(MOTORS["Y"]))               
                         
                     if joystick.get_button(2)==1 and joystick.get_button(4)==1:#Phi
                         if joystick.get_axis( 3 )>0:
@@ -1362,20 +1354,20 @@ class Spin_motors (PyTango.Device_4Impl):
                                 action[4]=True
                                 self.write('@{} MA {}'.format(MOTORS["PHI"],str(self.attr_min_PHI_read)))
                             else:
-                                speed=round(10*joystick.get_axis( 3 ),3)
+                                speed=round(PHI*joystick.get_axis( 3 ),3)
                                 self.write('@{} CV {}'.format(MOTORS["PHI"],str(speed)))
                         elif joystick.get_axis( 3 )<0:
                             if action[4]==False:
                                 action[4]=True
                                 self.write('@{} MA {}'.format(MOTORS["PHI"],str(self.attr_max_PHI_read)))
                             else:
-                                speed=round(10*abs(joystick.get_axis( 3 )),3)
+                                speed=round(PHI*abs(joystick.get_axis( 3 )),3)
                                 self.write('@{} CV {}'.format(MOTORS["PHI"],str(speed)))
                         elif joystick.get_axis( 3 )==0:
-                            self.write('@{} SSTOP'.format(MOTORS["PHI"]))
+                            self.write('@{} HSTOP'.format(MOTORS["PHI"]))
                     elif event.type == pygame.JOYBUTTONUP and (joystick.get_button(2)==0 or joystick.get_button(4)==0):
                         action[4]=False
-                        self.write('@{} SSTOP'.format(MOTORS["PHI"]))         
+                        self.write('@{} HSTOP'.format(MOTORS["PHI"]))         
             clock.tick(20)       
             
     def AskQuestion_thread(self):
@@ -1450,7 +1442,6 @@ class Spin_motors (PyTango.Device_4Impl):
                     try:
                         PC=self.write_and_read('@'+str(i)+' PC').split("=")
                         self.position_of_motor[i] = float(PC[1].split(" ")[0])
-                        print self.position_of_motor[i]
                         self.config.set('motor_{}'.format(_MOTORS[i]), "position", self.position_of_motor[i])
                         PE=self.write_and_read('@'+str(i)+' PE').split("=")
                         self.position_error_of_motor[i] = float(PE[1].split(" ")[0])
@@ -1500,6 +1491,10 @@ class Spin_motorsClass(PyTango.DeviceClass):
             [PyTango.DevLong, 
              '',
             [100]],
+        'serial_port':
+            [PyTango.DevString, 
+             '',
+            ["/dev/ttyUSB0"] ],
         }
 
 
@@ -1524,6 +1519,9 @@ class Spin_motorsClass(PyTango.DeviceClass):
             [[PyTango.DevVoid, "none"],
             [PyTango.DevString, "none"]],
         'write_and_read':
+            [[PyTango.DevString, "none"],
+            [PyTango.DevString, "none"]],
+        'write_and_read_ser':
             [[PyTango.DevString, "none"],
             [PyTango.DevString, "none"]],
         }
